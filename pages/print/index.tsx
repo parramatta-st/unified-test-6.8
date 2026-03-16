@@ -89,13 +89,31 @@ function getFileTypeLabel(file: TreeFile) {
   return file._typeLabel || file.type || file.item_type || 'File';
 }
 
+function deriveTopicFromPath(pathSegments: string[]) {
+  const cleaned = (pathSegments || []).filter(Boolean);
+  if (!cleaned.length) return '';
+
+  if (isStandardYearLabel(cleaned[0])) {
+    if (cleaned.length >= 4) return (cleaned[3] || '').trim();
+    return (cleaned[cleaned.length - 1] || '').trim();
+  }
+
+  return (cleaned[cleaned.length - 1] || '').trim();
+}
+
 function deriveContextFromPath(pathSegments: string[], item?: CatalogItem): PrintContext {
   const cleaned = (pathSegments || []).filter(Boolean);
   const folder = getFolderLabel(cleaned);
+  const year = (item?.year || cleaned[0] || '').trim();
+  const subject = (item?.subject || cleaned[1] || '').trim();
+  const pathTopic = deriveTopicFromPath(cleaned);
+  const itemTopic = (item?.topic || '').trim();
+  const topic = itemTopic && itemTopic.toLowerCase() !== year.toLowerCase() ? itemTopic : pathTopic;
+
   return {
-    year: (item?.year || cleaned[0] || '').trim(),
-    subject: (item?.subject || cleaned[1] || '').trim(),
-    topic: (item?.topic || cleaned[cleaned.length - 1] || '').trim(),
+    year,
+    subject,
+    topic,
     strand: (cleaned[2] || '').trim(),
     folder,
     path: cleaned,
@@ -109,10 +127,18 @@ function pickCommon(values: string[], fallback = '') {
 
 function deriveContextFromItems(pathSegments: string[], items: TreeFile[]): PrintContext {
   const base = deriveContextFromPath(pathSegments);
+  const normalizedYear = (base.year || '').trim().toLowerCase();
+  const topicFromItems = pickCommon(
+    items
+      .map((item) => (item.topic || '').trim())
+      .filter((topic) => topic && topic.toLowerCase() !== normalizedYear),
+    base.topic,
+  );
+
   return {
     year: pickCommon(items.map((item) => item.year || ''), base.year),
     subject: pickCommon(items.map((item) => item.subject || ''), base.subject),
-    topic: pickCommon(items.map((item) => item.topic || ''), base.topic),
+    topic: topicFromItems,
     strand: base.strand,
     folder: base.folder,
     path: base.path,
