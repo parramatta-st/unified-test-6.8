@@ -89,13 +89,31 @@ function getFileTypeLabel(file: TreeFile) {
   return file._typeLabel || file.type || file.item_type || 'File';
 }
 
+function deriveTopicFromPath(pathSegments: string[]) {
+  const cleaned = (pathSegments || []).filter(Boolean);
+  if (!cleaned.length) return '';
+
+  if (isStandardYearLabel(cleaned[0])) {
+    if (cleaned.length >= 4) return (cleaned[3] || '').trim();
+    return (cleaned[cleaned.length - 1] || '').trim();
+  }
+
+  return (cleaned[cleaned.length - 1] || '').trim();
+}
+
 function deriveContextFromPath(pathSegments: string[], item?: CatalogItem): PrintContext {
   const cleaned = (pathSegments || []).filter(Boolean);
   const folder = getFolderLabel(cleaned);
+  const year = (item?.year || cleaned[0] || '').trim();
+  const subject = (item?.subject || cleaned[1] || '').trim();
+  const pathTopic = deriveTopicFromPath(cleaned);
+  const itemTopic = (item?.topic || '').trim();
+  const topic = itemTopic && itemTopic.toLowerCase() !== year.toLowerCase() ? itemTopic : pathTopic;
+
   return {
-    year: (item?.year || cleaned[0] || '').trim(),
-    subject: (item?.subject || cleaned[1] || '').trim(),
-    topic: (item?.topic || cleaned[cleaned.length - 1] || '').trim(),
+    year,
+    subject,
+    topic,
     strand: (cleaned[2] || '').trim(),
     folder,
     path: cleaned,
@@ -109,27 +127,22 @@ function pickCommon(values: string[], fallback = '') {
 
 function deriveContextFromItems(pathSegments: string[], items: TreeFile[]): PrintContext {
   const base = deriveContextFromPath(pathSegments);
+  const normalizedYear = (base.year || '').trim().toLowerCase();
+  const topicFromItems = pickCommon(
+    items
+      .map((item) => (item.topic || '').trim())
+      .filter((topic) => topic && topic.toLowerCase() !== normalizedYear),
+    base.topic,
+  );
+
   return {
     year: pickCommon(items.map((item) => item.year || ''), base.year),
     subject: pickCommon(items.map((item) => item.subject || ''), base.subject),
-    topic: pickCommon(items.map((item) => item.topic || ''), base.topic),
+    topic: topicFromItems,
     strand: base.strand,
     folder: base.folder,
     path: base.path,
   };
-}
-
-function isEndpointUnavailable(message: string, status?: number) {
-  const lower = (message || '').toLowerCase();
-  if ([404, 405, 501, 502, 503, 504].includes(Number(status))) return true;
-  return (
-    lower.includes('not found') ||
-    lower.includes('bad gateway') ||
-    lower.includes('cannot') ||
-    lower.includes('unexpected token') ||
-    lower.includes('method not allowed') ||
-    lower.includes('failed to fetch')
-  );
 }
 
 export default function PrintPage() {
@@ -293,47 +306,6 @@ export default function PrintPage() {
     return json;
   }
 
-  async function sendTopicPrintRequest(items: TreeFile[], meta: PrintMeta, context: PrintContext) {
-    const itemPayload = items.map((file) => ({
-      id: file.id,
-      material_id: file.id,
-      qty,
-      path: file.folderSegments,
-      folder: getFolderLabel(file.folderSegments),
-      type: getFileDisplayName(file),
-      item_name: getFileDisplayName(file),
-    }));
-
-    const response = await fetch('/api/print-proxy?action=print-topic', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        qty,
-        meta,
-        path: context.path,
-        folder: context.folder,
-        year: context.year,
-        subject: context.subject,
-        topic: context.topic,
-        material_ids: items.map((file) => file.id),
-        ids: items.map((file) => file.id),
-        types: items.map((file) => getFileDisplayName(file)),
-        item_names: items.map((file) => getFileDisplayName(file)),
-        items: itemPayload,
-        files: itemPayload,
-      }),
-    });
-
-    const json = await response.json().catch(() => ({}));
-    if (!response.ok || !json?.ok) {
-      const error = new Error(json?.error || 'Topic print failed') as PrintFailure;
-      error.raw = json;
-      error.printedCount = Number(json?.printedCount || json?.printed_count || 0) || 0;
-      throw Object.assign(error, { status: response.status });
-    }
-    return json;
-  }
-
   async function printSequentially(items: TreeFile[], meta: PrintMeta) {
     const results: Array<{ id: number; ok: boolean; raw?: any }> = [];
 
@@ -465,24 +437,12 @@ export default function PrintPage() {
     setMsg('');
 
     try {
-      let raw: any;
-      let backendMode = 'batch';
-
-      try {
-        setBusySubtitle('Trying fast batch print…');
-        raw = await sendTopicPrintRequest(files, meta, context);
-      } catch (error: any) {
-        const statusCode = typeof error?.status === 'number' ? error.status : undefined;
-        if (!isEndpointUnavailable(error?.message || '', statusCode)) {
-          throw error;
-        }
-        backendMode = 'sequential-fallback';
-        raw = await printSequentially(files, meta);
-      }
+      setBusySubtitle('Printing files one by one…');
+      const raw = await printSequentially(files, meta);
 
       await logPrint(
         buildTopicLogPayload(files, context, true, {
-          backend_mode: backendMode || raw?.mode || 'batch',
+          backend_mode: raw?.mode || 'sequential-fallback',
           printed_count: files.length,
         }),
       );
@@ -491,7 +451,7 @@ export default function PrintPage() {
       const printedCount = Number(error?.printedCount || 0) || 0;
       await logPrint(
         buildTopicLogPayload(files, context, false, {
-          backend_mode: printedCount > 0 ? 'sequential-fallback' : 'batch',
+          backend_mode: 'sequential-fallback',
           printed_count: printedCount,
           error: error?.message || 'Print failed',
           failed_material_id: error?.failedItem?.id || null,
