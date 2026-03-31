@@ -101,11 +101,27 @@ function deriveTopicFromPath(pathSegments: string[]) {
   return (cleaned[cleaned.length - 1] || '').trim();
 }
 
-function deriveContextFromPath(pathSegments: string[], item?: CatalogItem): PrintContext {
+function normalizeCatalogPath(pathSegments: string[]) {
   const cleaned = (pathSegments || []).filter(Boolean);
+  if (cleaned[0]?.toLowerCase() === 'content') return cleaned.slice(1);
+  return cleaned;
+}
+
+function pickFirstNonEmpty(...values: Array<string | undefined>) {
+  for (const value of values) {
+    const trimmed = (value || '').trim();
+    if (trimmed) return trimmed;
+  }
+  return '';
+}
+
+function deriveContextFromPath(pathSegments: string[], item?: CatalogItem): PrintContext {
+  const cleaned = normalizeCatalogPath(pathSegments);
   const folder = getFolderLabel(cleaned);
-  const year = (item?.year || cleaned[0] || '').trim();
-  const subject = (item?.subject || cleaned[1] || '').trim();
+  const year = pickFirstNonEmpty(item?.year, cleaned[0]);
+  const subjectFromItem = (item?.subject || '').trim();
+  const looksLikeRealSubject = subjectFromItem && subjectFromItem.toLowerCase() !== 'content';
+  const subject = looksLikeRealSubject ? subjectFromItem : pickFirstNonEmpty(cleaned[1]);
   const pathTopic = deriveTopicFromPath(cleaned);
   const itemTopic = (item?.topic || '').trim();
   const topic = itemTopic && itemTopic.toLowerCase() !== year.toLowerCase() ? itemTopic : pathTopic;
@@ -137,7 +153,12 @@ function deriveContextFromItems(pathSegments: string[], items: TreeFile[]): Prin
 
   return {
     year: pickCommon(items.map((item) => item.year || ''), base.year),
-    subject: pickCommon(items.map((item) => item.subject || ''), base.subject),
+    subject: pickCommon(
+      items
+        .map((item) => (item.subject || '').trim())
+        .filter((subject) => subject && subject.toLowerCase() !== 'content'),
+      base.subject,
+    ),
     topic: topicFromItems,
     strand: base.strand,
     folder: base.folder,
@@ -280,6 +301,7 @@ export default function PrintPage() {
   }
 
   async function sendSinglePrintRequest(file: TreeFile, meta: PrintMeta) {
+    const normalizedPath = normalizeCatalogPath(file.folderSegments);
     const response = await fetch('/api/print-proxy?action=print', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -287,8 +309,8 @@ export default function PrintPage() {
         material_id: file.id,
         qty,
         meta,
-        path: file.folderSegments,
-        folder: getFolderLabel(file.folderSegments),
+        path: normalizedPath,
+        folder: getFolderLabel(normalizedPath),
         year: meta.year,
         subject: meta.subject,
         topic: meta.topic,
