@@ -18,6 +18,10 @@ export default function Home() {
               <div className="text-xl" style={{fontWeight:700}}>Print</div>
               <div className="text-sm text-muted">Print lesson packs (L/R/H).</div>
             </Link>
+            <Link href="/tutor" prefetch={false} className="tile p-6">
+              <div className="text-xl" style={{fontWeight:700}}>Tutor App (MVP)</div>
+              <div className="text-sm text-muted">Try the mobile-first v2 shell.</div>
+            </Link>
           </div>
         </div>
       </main>
