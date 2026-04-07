@@ -8,7 +8,7 @@ function isPublicAsset(pathname: string) {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  if (pathname === '/login' || isPublicAsset(pathname)) {
+  if (pathname === '/login' || pathname.startsWith('/tutor') || isPublicAsset(pathname)) {
     return NextResponse.next();
   }
 
